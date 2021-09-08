@@ -86,19 +86,23 @@ var requireAccessToken = function(req, res, next) {
 
 app.get("/helloWorld", getAccessToken, function(req, res){
 	if (req.access_token) {
+		var resource = {
+			"greeting": ""
+		};
 		if (req.query.language == "en") {
-			res.send('Hello World');
+			resource.greeting = 'Hello World';
 		} else if (req.query.language == "de") {
-			res.send('Hallo Welt');
+			resource.greeting ='Hallo Welt';
 		} else if (req.query.language == "it") {
-			res.send('Ciao Mondo');
+			resource.greeting = 'Ciao Mondo';
 		} else if (req.query.language == "fr") {
-			res.send('Bonjour monde');
+			resource.greeting = 'Bonjour monde';
 		} else if (req.query.language == "es") {
-			res.send('Hola mundo');
+			resource.greeting ='Hola mundo';
 		} else {
-			res.send("Error, invalid language: "+ querystring.escape(req.query.language));
+			resource.greeting = "Error, invalid language: "+ querystring.escape(req.query.language);
 		}
+		res.json(resource);
 	}
 	
 });
