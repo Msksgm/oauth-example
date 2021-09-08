@@ -97,7 +97,7 @@ app.get("/helloWorld", getAccessToken, function(req, res){
 		} else if (req.query.language == "es") {
 			res.send('Hola mundo');
 		} else {
-			res.send("Error, invalid language: "+ req.query.language);
+			res.send("Error, invalid language: "+ querystring.escape(req.query.language));
 		}
 	}
 	
