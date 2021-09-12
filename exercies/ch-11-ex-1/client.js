@@ -1,25 +1,25 @@
 var express = require("express");
+var bodyParser = require('body-parser');
 var request = require("sync-request");
 var url = require("url");
 var qs = require("qs");
 var querystring = require('querystring');
 var cons = require('consolidate');
 var randomstring = require("randomstring");
+var jose = require('jsrsasign');
+var base64url = require('base64url');
 var __ = require('underscore');
 __.string = require('underscore.string');
 
 
 var app = express();
 
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
 app.engine('html', cons.underscore);
 app.set('view engine', 'html');
 app.set('views', 'files/client');
-
-// authorization server information
-var authServer = {
-	authorizationEndpoint: 'http://localhost:9001/authorize',
-	tokenEndpoint: 'http://localhost:9001/token'
-};
 
 // client information
 
@@ -27,24 +27,41 @@ var client = {
 	"client_id": "oauth-client-1",
 	"client_secret": "oauth-client-secret-1",
 	"redirect_uris": ["http://localhost:9000/callback"],
-	"scope": "foo"
+	"scope": "foo bar"
+};
+
+// authorization server information
+var authServer = {
+	authorizationEndpoint: 'http://localhost:9001/authorize',
+	tokenEndpoint: 'http://localhost:9001/token'
+};
+
+var rsaKey = {
+  "alg": "RS256",
+  "e": "AQAB",
+  "n": "p8eP5gL1H_H9UNzCuQS-vNRVz3NWxZTHYk1tG9VpkfFjWNKG3MFTNZJ1l5g_COMm2_2i_YhQNH8MJ_nQ4exKMXrWJB4tyVZohovUxfw-eLgu1XQ8oYcVYW8ym6Um-BkqwwWL6CXZ70X81YyIMrnsGTyTV6M8gBPun8g2L8KbDbXR1lDfOOWiZ2ss1CRLrmNM-GRp3Gj-ECG7_3Nx9n_s5to2ZtwJ1GS1maGjrSZ9GRAYLrHhndrL_8ie_9DS2T-ML7QNQtNkg2RvLv4f0dpjRYI23djxVtAylYK4oiT_uEMgSkc4dxwKwGuBxSO0g9JOobgfy0--FUHHYtRi0dOFZw",
+  "kty": "RSA",
+  "kid": "authserver"
 };
 
 var protectedResource = 'http://localhost:9002/resource';
 
 var state = null;
 
-var access_token = '987tghjkiu6trfghjuytrghj';
+var access_token = null;
+var refresh_token = null;
 var scope = null;
-var refresh_token = 'j2r3oj32r23rmasd98uhjrk2o3i';
+var id_token = null;
+var userInfo = null;
 
 app.get('/', function (req, res) {
-	res.render('index', {access_token: access_token, scope: scope, refresh_token: refresh_token});
+	res.render('index', {access_token: access_token, refresh_token: refresh_token, scope: scope});
 });
 
 app.get('/authorize', function(req, res){
 
 	access_token = null;
+	refresh_token = null;
 	scope = null;
 	state = randomstring.generate();
 	
@@ -60,8 +77,8 @@ app.get('/authorize', function(req, res){
 	res.redirect(authorizeUrl);
 });
 
-app.get('/callback', function(req, res){
-	
+app.get("/callback", function(req, res){
+
 	if (req.query.error) {
 		// it's an error response, act accordingly
 		res.render('error', {error: req.query.error});
@@ -69,7 +86,9 @@ app.get('/callback', function(req, res){
 	}
 	
 	var resState = req.query.state;
-	if (resState != state) {
+	if (resState == state) {
+		console.log('State value matches: expected %s got %s', state, resState);
+	} else {
 		console.log('State DOES NOT MATCH: expected %s got %s', state, resState);
 		res.render('error', {error: 'State value did not match'});
 		return;
@@ -109,21 +128,20 @@ app.get('/callback', function(req, res){
 		scope = body.scope;
 		console.log('Got scope: %s', scope);
 
-		res.render('index', {access_token: access_token, scope: scope, refresh_token: refresh_token});
+		res.render('index', {access_token: access_token, refresh_token: refresh_token, scope: scope});
+
 	} else {
-		access_token = null;
-		if (refresh_token) {
-			refreshAccessToken(req, res);
-			return;
-		} else {
-			res.render('error', {error: 'Unable to fetch access token, server response: ' + tokRes.statusCode})
-			return;
-		}
+		res.render('error', {error: 'Unable to fetch access token, server response: ' + tokRes.statusCode})
 	}
 });
 
 app.get('/fetch_resource', function(req, res) {
 
+	if (!access_token) {
+		res.render('error', {error: 'Missing access token.'});
+		return;
+	}
+	
 	console.log('Making request with access token %s', access_token);
 	
 	var headers = {
@@ -140,49 +158,20 @@ app.get('/fetch_resource', function(req, res) {
 		res.render('data', {resource: body});
 		return;
 	} else {
-		/*
-		 * Instead of always returning an error like we do here, refresh the access token if we have a refresh token
-		 */
-		console.log("resource status error code " + resource.statusCode);
-		res.render('error', {error: 'Unable to fetch resource. Status ' + resource.statusCode});
+		access_token = null;
+		if (refresh_token) {
+			// try to refresh and start again
+			refreshAccessToken(req, res);
+			return;
+		} else {
+			res.render('error', {error: 'Server returned response code: ' + resource.statusCode});
+			return;
+		}
 	}
-	
 	
 });
 
-var refreshAccessToken = function(req, res) {
-
-	/*
-	 * Use the refresh token to get a new access token
-	 */
-	var form_data = qs.stringify({
-		grant_type: 'refresh_token',
-		refresh_token: refresh_token
-	})
-	var headers = {
-		'Content-Type': 'application/x-www-form-urlencoded',
-		'Authorization': 'Bearer ' + encodeClientCredentials(client.client_id, client.client_secret)
-	};
-
-	var tokRes = request('POST', authServer.tokenEndpoint, {
-		body: form_data,
-		headers: headers
-	})
-
-	if (tokRes.statusCode >= 200 && tokRes.statusCode < 300){
-		access_token = body.access_token;
-		if (body.refreshAccessToken){
-			refresh_token = body.refresh_token;
-		}
-		
-		res.redirect('/fetch_resource');
-		return;
-	} else {
-		refresh_token = null;
-		res.render('error', {error: 'Unable to refresh token.'});
-		return;
-	}
-};
+app.use('/', express.static('files/client'));
 
 var buildUrl = function(base, options, hash) {
 	var newUrl = url.parse(base, true);
@@ -203,8 +192,6 @@ var buildUrl = function(base, options, hash) {
 var encodeClientCredentials = function(clientId, clientSecret) {
 	return Buffer.from(querystring.escape(clientId) + ':' + querystring.escape(clientSecret)).toString('base64');
 };
-
-app.use('/', express.static('files/client'));
 
 var server = app.listen(9000, 'localhost', function () {
   var host = server.address().address;

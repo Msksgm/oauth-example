@@ -7,6 +7,7 @@ var nosql = require('nosql').load('database.nosql');
 var querystring = require('querystring');
 var __ = require('underscore');
 __.string = require('underscore.string');
+var base64url = require('base64url');
 
 var app = express();
 
@@ -35,12 +36,44 @@ var clients = [
 	}
 ];
 
+var userInfo = {
+
+	"alice": {
+		"sub": "9XE3-JI34-00132A",
+		"preferred_username": "alice",
+		"name": "Alice",
+		"email": "alice.wonderland@example.com",
+		"email_verified": true
+	},
+	
+	"bob": {
+		"sub": "1ZT5-OE63-57383B",
+		"preferred_username": "bob",
+		"name": "Bob",
+		"email": "bob.loblob@example.net",
+		"email_verified": false
+	},
+
+	"carol": {
+		"sub": "F5Q1-L6LGG-959FS",
+		"preferred_username": "carol",
+		"name": "Carol",
+		"email": "carol.lewis@example.net",
+		"email_verified": true,
+		"username" : "clewis"
+ 	}	
+};
+
 var codes = {};
 
 var requests = {};
 
 var getClient = function(clientId) {
 	return __.find(clients, function(client) { return client.client_id == clientId; });
+};
+
+var getUser = function(username) {
+	return userInfo[username];
 };
 
 app.get('/', function(req, res) {
@@ -110,9 +143,11 @@ app.post('/approve', function(req, res) {
 
 			var code = randomstring.generate(8);
 			
+			var user = getUser(req.body.user);
+			
 			// save the code and request for later
 			
-			codes[code] = { request: query, scope: rscope };
+			codes[code] = { request: query, scope: rscope, user: user };
 		
 			var urlParsed = buildUrl(query.redirect_uri, {
 				code: code,
@@ -181,28 +216,29 @@ app.post("/token", function(req, res){
 		
 		if (code) {
 			delete codes[req.body.code]; // burn our code, it's been used
-			
-			/*
-			 * Make sure any passed-in redirect URI matches the registered redirect URI
-			 */
-			if (code.request.redirect_uri) {
-				if (code.request.redirect_uri != req.body.redirect_uri) {
-					res.status(400).json({error: 'invalid_grant'});
-					return;
-				}
-			
-			
 			if (code.request.client_id == clientId) {
+				
+				//var access_token = randomstring.generate();
+				var header = { 'typ': 'JWT', 'alg': 'none' };
+				var payload = {
+					iss: 'http://localhost:9001/',
+					sub: code.user ? code.user.sub : undefined,
+					aud: 'http://localhost:9002/',
+					iat: Math.floor(Date.now() / 1000),
+					exp: Math.floor(Date.now() / 1000) + (5 * 60),
+					jti: randomstring.generate(8)
+				};
+				
+				var access_token = base64url.encode(JSON.stringify(header))
+					+ '.'
+					+ base64url.encode(JSON.stringify(payload))
+					+ '.';
 
-				var access_token = randomstring.generate();
-				var refresh_token = randomstring.generate();
-
-				nosql.insert({ access_token: access_token, client_id: clientId, scope: code.scope });
-				nosql.insert({ refresh_token: refresh_token, client_id: clientId, scope: code.scope });
+				nosql.insert({ access_token: access_token, client_id: clientId, scope: code.scope, user: code.user });
 
 				console.log('Issuing access token %s', access_token);
 
-				var token_response = { access_token: access_token, token_type: 'Bearer',  refresh_token: refresh_token, scope: code.scope.join(' ') };
+				var token_response = { access_token: access_token, token_type: 'Bearer',  scope: code.scope.join(' ') };
 
 				res.status(200).json(token_response);
 				console.log('Issued tokens for code %s', req.body.code);
