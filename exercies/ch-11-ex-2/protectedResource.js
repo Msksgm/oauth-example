@@ -59,6 +59,12 @@ var getAccessToken = function(req, res, next) {
 	 * Validate the signature of the JWT
 	 */
 
+	if (jose.jws.JWS.verify(inToken,
+		Buffer.from(sharedTokenSecret).toString('hex'),
+		[header.alg])){
+
+	console.log('Signature validated');
+
 	if (payload.iss == 'http://localhost:9001/') {
 		console.log('issuer OK');
 		if ((Array.isArray(payload.aud) && __.contains(payload.aud, 'http://localhost:9002/')) || 
@@ -81,6 +87,8 @@ var getAccessToken = function(req, res, next) {
 		}
 		
 	}
+		}
+
 			
 	next();
 	return;
