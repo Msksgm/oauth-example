@@ -129,16 +129,17 @@ app.get("/callback", function(req, res){
 		scope = body.scope;
 		console.log('Got scope: %s', scope);
 
-		/*
-		 * Parse and validate the ID token
-		 */
 		if (body.id_token) {
 			userInfo = null;
 			id_token = null;
 
+			console.log('Got ID token: %s', body.id_token);
+	
+			// check the id token
 			var pubKey = jose.KEYUTIL.getKey(rsaKey);
 			var tokenParts = body.id_token.split('.');
 			var payload = JSON.parse(base64url.decode(tokenParts[1]));
+			console.log('Payload', payload);
 			if (jose.jws.JWS.verify(body.id_token, pubKey, [rsaKey.alg])) {
 				console.log('Signature validated.');
 				if (payload.iss == 'http://localhost:9001/') {
@@ -164,6 +165,8 @@ app.get("/callback", function(req, res){
 					}
 				}
 			}
+			res.render('userinfo', {userInfo: userInfo, id_token: id_token});
+			return;
 		}
 		
 		res.render('index', {access_token: access_token, refresh_token: refresh_token, scope: scope});
@@ -207,14 +210,13 @@ app.get('/fetch_resource', function(req, res) {
 
 app.get('/userinfo', function(req, res) {
 	
-	/*
-	 * Call the UserInfo endpoint and store/display the results
-	 */
 	var headers = {
-		'Authorization': 'Bearer ' + access_token;
+		'Authorization': 'Bearer ' + access_token
 	};
-
-	var resource = request('GET', authServer.userInfoEndpoint, {headers: headers});
+	
+	var resource = request('GET', authServer.userInfoEndpoint,
+		{headers: headers}
+	);
 	if (resource.statusCode >= 200 && resource.statusCode < 300) {
 		var body = JSON.parse(resource.getBody());
 		console.log('Got data: ', body);
@@ -227,6 +229,7 @@ app.get('/userinfo', function(req, res) {
 		res.render('error', {error: 'Unable to fetch user information'});
 		return;
 	}
+	
 });
 
 app.use('/', express.static('files/client'));
